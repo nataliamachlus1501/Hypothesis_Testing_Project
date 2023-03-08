@@ -1,0 +1,489 @@
+---
+title: "Projekt grupowy - Wnioskowanie statystyczne"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  word_document: default
+---
+
+```{r}
+library(GGally)
+library(ggplot2)
+library(measurements)
+library(multcomp)
+library(dplyr)
+```
+
+***
+
+# Wstęp
+
+W naszym projekcie wykorzystujemy zbiór danych pochodzących ze strony kaegle o nazwie Insurance Claim Analysis: Demographic and Health. Dane zawierają informacje związane z przyznaną kwota ubezpieczenia w zależności od różnorodnych czynników opisujących daną osobę. 
+Link do danych: https://www.kaggle.com/datasets/thedevastator/insurance-claim-analysis-demographic-and-health
+
+**Weryfikowane hipotezy**
+
+Będziemy weryfikowały następujące hipotezy: \
+1.Czy poziom ciśnienia krwi wpływa na zwiększenie kwoty przyznanej z ubezpieczenia? \
+2.Czy kwota przyznana przez ubezpieczenie zwiększa się gdy osoba pali papierosy? \
+3.Czy kwota przyznana przez ubezpieczenie zwiększa się wraz z ilością posiadanych dzieci?
+
+**Opis zmiennych**
+
+zmienna           opis
+--------          ----
+`index`           indeks
+`PatientID`       indywidualny identyfikator osoby ubezpieczonej
+`age`             wiek osoby ubezpieczonej
+`gender`          płeć osoby ubezpieczonej
+`bmi`             wskaźnik bmi osoby ubezpieczonej
+`bloodpressure`   ciśnienie krwi osoby ubezpieczonej
+`diabetic`        indykator czy osoba ubezpieczona ma cukrzyce (Yes, No)
+`children`        ilość dzieci osoby ubezpieczonej (0 do 5)
+`smoker`          indykator czy osoba ubezpieczona pali (Yes, No)
+`region`          region w US (northeast, southeast, southwest, northwest)
+`claim`           kwota przyznanego ubezpieczenia
+
+**Wczytanie danych**
+
+```{r}
+#insurance_data <- read.csv("C:/Users/natal/Desktop/Wnioskowanie stat 2/insurance_data.csv")
+insurance_data <- read.csv("C:/Users/misia/Desktop/insurance_data.csv")
+```
+
+***
+
+# Czyszczenie danych
+
+**Usuniecie nieistotnych kolumn**
+
+```{r}
+#sprawdzenie czy kolumna ID nie zwiera duplikatów
+insurance_data[duplicated(insurance_data$PatientID),]
+#brak duplikatów
+
+#usunięcie nieistotnych kolumn, teraz z 11 kolumn mamy 9
+insurance <- subset(insurance_data, select = -c(index,PatientID))
+```
+
+**Braki danych**
+
+```{r}
+insurance %>% summarise_all(~ sum(is.na(.)))
+#pokazuje braki danych tylko w kolumnie age, jednak np w kolumnie region mamy już na
+#początku trzy puste komórki
+
+#zastępujemy puste komórki wartością NA
+insurance[insurance == ''] <- NA
+
+#usunięcie wierszy z brakami
+insurance <- na.omit(insurance)
+```
+**Typ danych**
+
+```{r}
+#typ i wygląd danych
+
+str(insurance)
+```
+
+Mamy do czynienia zarówno z danymi numerycznymi (zmienne `age`, `bmi`, `claim`, `bloodpressure`, `children`) jak i tekstowymi(`gender`, `diabetic`, `smoker`, `region`)
+
+**Zamiana odpowiednich zmiennych na czynniki**
+
+```{r}
+#gender
+
+insurance <- insurance %>% mutate(gender = as.numeric(gender == "male"))
+
+insurance <- insurance %>% mutate(gender = factor(gender, levels = c(`female` = 0, male = 1), 
+                        labels = c("female", "male")))
+
+#smoker
+
+insurance <- insurance %>% mutate(smoker = as.numeric(smoker == "Yes"))
+
+insurance <- insurance %>% mutate(smoker = factor(smoker, levels = c(`No` = 0, Yes = 1), 
+                        labels = c("No", "Yes")))
+
+#diabetic
+
+insurance <- insurance %>% mutate(diabetic = as.numeric(diabetic == "Yes"))
+
+insurance <- insurance %>% mutate(diabetic = factor(diabetic, levels = c(`No` = 0, Yes = 1), 
+                        labels = c("No", "Yes")))
+
+#have_child
+
+#tworzymy nową kolumnę 'have_child' i zmieniamy wartości na dwupoziomowe:
+#0 -> nie ma dzieci objętych ubezpieczeniem zdrowotnym
+#1 -> ma dzieci objęte ubezpieczeniem zdrowotnym
+
+insurance$have_child <- insurance$children 
+insurance$have_child[insurance$have_child > 0] <- 1
+
+insurance <- insurance %>% mutate(have_child = factor(have_child, levels = c(`No` = 0, Yes = 1), 
+                        labels = c("No", "Yes")))
+
+#children
+
+insurance <- insurance %>% mutate(
+  children = factor(
+    children, 
+    levels = c(`None` = 0, One = 1, Two = 2, Three = 3,Four = 4, Five = 5), 
+                        labels = c("None", "One" , "Two", "Three","Four", "Five")))
+```
+
+***
+
+# Podstawowe statystyki
+
+```{r}
+#podsumowanie danych
+
+lapply(insurance, summary)
+```
+
+Widzimy że analiza została przeprowadzona dla osób w wieku od 18 do 60 lat. Mamy podobną liczbę kobiet(662) i mężczyzn(670). Ponadto mamy bardzo dużą liczbę osób niepalących w stosunku do palących. Możemy zaobserwować, że kwota przyznanego ubezpieczenia waha się od około 1122 jednostek monetarnych do niemalże 63770. Przy czym połowa osób ma otrzymuje kwotę z przedziału 4760 - 16781 z medianą 9413. Ciśnienie krwi osób badanych przyjmuje wartości od 80 mmHg do maksymalnie 140 mmHg. Średnia wartość ciśnienia krwi wynosi 99.00 mmHg. Jeżeli chodzi o bmi, to jego minimalna wartość wynosi 16 natomiast maksymalna 53.10, połowa osób ma bmi z przedziału 26.20 - 30.66.
+
+***
+
+# Eksploracyjna analiza danych
+
+W tej sekcji przedstawimy jedynie wykresy związane z weryfikowanymi przez nas hipotezami.
+
+```{r}
+ggplot(insurance, aes(x=claim)) +
+  geom_histogram(position="identity", alpha=0.5, fill = "darkblue")
+
+```
+
+Nasze dane dotyczące kwoty z ubezpieczeń mają rozkład prawo skośny.
+
+```{r}
+ggplot(insurance, aes(x=children))+
+  geom_bar(stat="count", width=0.7, fill="lightblue")+
+  theme_minimal()+labs(x = "Liczba dzieci", y = "Ilość przypadków")
+```
+
+Mamy najwięcej danych dla osób posiadających jedno dziecko, bardzo mało dla posiadających czworo lub pięć dzieci.
+
+```{r}
+ggplot(insurance, aes(x=claim, fill=smoker, color=smoker)) +
+  geom_histogram(position="identity", alpha=0.5)
+
+smokers <- insurance %>%
+  group_by(smoker) %>%
+  summarize(mean_claim = mean(claim))
+
+ggplot(smokers, 
+       aes(x = smoker, 
+           y = mean_claim, fill = smoker, width=0.5)) +
+  geom_bar(stat = "identity") + 
+  ggtitle("Średnia kwota przyznanego ubezpieczenia ze względu na palenie ") + 
+  xlab("Czy osoba pali") + ylab("Średnia kwota przyznanego ubezpieczenia")
+
+```
+
+Z wykresu można by podejrzewać że jest bardzo istotny wpływ palenia na wyższą kwotę ubezpieczenia, dla osób palących jest ona średnio wyższa.
+
+```{r}
+ggplot(insurance, aes(x=claim, fill=children, color=children)) +
+  geom_histogram(position="identity", alpha=0.5)
+
+children_ <- insurance %>%
+  group_by(children) %>%
+  summarize(mean_claim = mean(claim))
+
+ggplot(children_, 
+       aes(x = children, 
+           y = mean_claim, fill = children, width = 0.5)) +
+  geom_bar(stat = "identity") + 
+  ggtitle("Średnia kwota przyznanego ubezpieczenia ze względu na posiadanie dzieci ") + 
+  xlab("Liczba dzieci") + ylab("Średnia kwota przyznanego ubezpieczenia")
+```
+
+Z wykresu można odczytać że osoby posiadające piątkę dzieci mają najmniejszą średnią kwotę przyznanego ubezpieczenia.
+
+```{r}
+blood <- insurance %>%
+  group_by(bloodpressure) %>%
+  summarize(mean_claim = mean(claim))
+
+ggplot(blood, 
+       aes(x = bloodpressure, 
+           y = mean_claim, fill = bloodpressure)) +
+  geom_bar(stat = "identity") + 
+  ggtitle("Średnia kwota przyznanego ubezpieczenia ze względu na ciśnienie krwi") + 
+  xlab("Wysokość ciśnienia") + ylab("Średnia kwota przyznanego ubezpieczenia")
+```
+
+Z danego wykresu wynika że wraz z wzrostem ciśnienia osoby rośnie średnia kwota przyznanego ubezpieczenia.
+
+```{r}
+insurance_plot <- insurance[,c("age","bmi","bloodpressure","claim","smoker",
+                               "gender","children","diabetic")]
+ggpairs(insurance_plot)
+```
+
+Najlepszym predykatorem zmiennej `claim` jest zmienna `bloodpressure` (korelacja 0.531) ,drugim `bmi` a nastepnie `age` (-0.029). Nie możemy wykluczyć, że równie silnymi predykatorami mogą być zmienne kategoryczne np. `smoke` i `children` (zwłaszcza pierwsza z nich - sądząc po wykresie). Powyższa funkcja nie podaje miary asocjacji pomiędzy zmiennymi kategorycznymi a numerycznymi. Taką miarę policzymy ręcznie, najbardziej typowym w tym przypadku współczynnikiem będzie współczynnik korelacji punktowo-dwuseryjnej:
+
+```{r}
+insurance %>% select(claim, smoker) %>% na.omit() %>% 
+  summarise(cor(claim, as.numeric(smoker)))
+```
+
+```{r}
+insurance %>% select(claim, children) %>% na.omit() %>% 
+  summarise(cor(claim, as.numeric(children)))
+```
+Wychodzi na to że palenie tytoniu jest najistotniejszym predykatorem zmiennej `claim`.Należałoby sprawdzić czy faktycznie efekt palenia jest tak bardzo istotny, czy może tak wysoki współczynnik korelacji jest związany z obecnością zmiennych towarzyszących.
+
+***
+
+# Weryfikacja hipotez
+
+W naszym przypadku zmienną objaśnianą będzie kwota przyznanego ubezpieczenia, natomiast wszystkimi potencjalnymi predykatorami informacje na temat danej osoby.
+
+**Hipoteza 1**
+Czy poziom ciśnienia krwi wpływa na zwiększenie kwoty przyznanej z ubezpieczenia? 
+
+Najpierw tworzymy model, który objaśnia `claim` przez predykator o najsilniejszej asocjacji.
+
+```{r}
+model <-lm(claim ~ bloodpressure,insurance)
+summary(model)
+
+```
+
+Według danego modelu efekt ciśnienia krwi jest bardzo istotny statystycznie w odniesieniu do kosztów ubezpieczenia. Jedna jednostka ciśnienia krwi odpowiada za 562.11 jednostek monetarnych przyznanego ubezpieczenia. Współczynnik R^2 pokazuje, że model wyjaśnia około 28 % wariancji. Test F informuje nas o tym że utworzony model jest lepszy od modelu zerowego(p-value < 0.05).
+
+```{r}
+confint(model)
+```
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model)
+```
+
+Z wykresów diagnostycznych można odczytać że rozkład reszt nie jest normalny, wariancja jest w miarę stała.
+
+```{r}
+model <-lm(claim ~ bmi,insurance)
+summary(model)
+```
+
+Według danego modelu efekt bmi jest również istotny statystycznie. Jedna jednostka bmi odpowiada za około 395.70 jednostek monetarnych przyznanego ubezpieczenia. Model wyjaśnia bardzo małą część wariancji - około 3 %.
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model)
+```
+
+Model jest gorzej dopasowany, wariancja nadal jest w miarę stała.
+
+Kolejnym najbardziej skorelowanym ze zmienną zależną predykatorem jest zmienna wiek.
+
+```{r}
+model <-lm(claim ~ age,insurance)
+summary(model)
+```
+
+Według danego modelu efekt wieku jest nieistotny statystycznie.
+
+W tym momencie naszym celem jest sprawdzenie czy faktycznie ciśnienie krwi ma tak istotny wpływ na wysokość otrzymanej kwoty z ubezpieczenia, czy jednak jest to spowodowane obecnością zmiennych towarzyszących, które wpływałyby jednocześnie na zmienna `bloodpressure` oraz na zmienna `claim`. Podejrzewamy ze osoby o większym bmi maja większe ciśnienie krwi. Sprawdzamy efekty tych zmiennych między sobą w odniesieniu do `claim`.
+
+```{r}
+model <- lm(claim ~ bloodpressure*bmi,insurance)
+summary(model)
+```
+
+Efekty zmiennych niezależnych - ciśnienia krwi i bmi są względem siebie zależne w odniesieniu do zmiennej zależnej `claim`. Interakcja jest istotna statystycznie, w związku z powyższym należy ją zachować.
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model)
+```
+
+
+```{r}
+model <-lm(claim ~ bloodpressure + bmi,insurance)
+summary(model)
+```
+
+Zauważmy, że efekt zmiennej `bloodpressure` zmalał: w modelu z jedną zmienną wynosił 562.11, a teraz wynosi 542.85. Podobnie zmalał efekt zmiennej `bmi`: teraz na jedną jednostkę bmi przypada 248.49 jednostek monetarnych. Różnice w tych efektach wynikają z faktu iż bmi i ciśnienie krwi są skorelowane (współczynnik korelacji 0.145). Korelacja ta nie jest jednak na tyle duża by obawiać się niekontrolowanego wzrostu wariancji współczynników. 
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model)
+```
+
+Możliwe, że osoby starsze mają wyższy poziom ciśnienia krwi.
+
+```{r}
+model <- lm(claim ~ bloodpressure*age,insurance)
+summary(model)
+```
+
+Interakcja pomiędzy ciśnieniem krwi a wiekiem jest nieistotna statystycznie. Oznacza to że efekty ciśnienia krwi i wieku są względem siebie niezależne, czyli nie trzeba uwzględniać zmiennej `age` w modelu.
+
+Chcemy następnie sprawdzić czy płeć ma wpływ na poziom ciśnienia krwi.
+
+```{r}
+ggplot(insurance %>% filter(!is.na(gender)), aes(x = bloodpressure, y = claim, color = gender)) +
+  geom_point() + geom_smooth(method = "lm")
+```
+
+Widzimy obecność interakcji. Wpływ zmiennej niezależnej `bloodpressure` na zmienną zależną `claim` zmienia się w zależności od poziomu drugiej zmiennej niezależnej `gender`.
+
+```{r}
+model <- lm(claim ~ bloodpressure*gender,insurance)
+summary(model)
+```
+
+Model uznał interakcję za istotną statystycznie.
+
+Kolejnym krokiem jest sprawdzenie czy to ze osoba pali wpływa na większe ciśnienie krwi w odniesieniu do zmiennej `claim`.
+
+```{r}
+ggplot(insurance %>% filter(!is.na(smoker)), aes(x = bloodpressure, y = claim, color = smoker)) +
+  geom_point() + geom_smooth(method = "lm")
+```
+
+Linie regresji są do siebie równoległe. Brak interakcji między paleniem a ciśnieniem krwi.
+
+Interakcja oznacza, że wpływ jednej zmiennej niezależnej na zmienną zależną zmienia się w zależności od poziomu drugiej zmiennej niezależnej. Po uwzględnieniu zmiennych z istotną statystycznie interakcją mamy następujące wyniki:
+
+```{r}
+model <- lm(claim ~ bmi + bloodpressure + gender,insurance)
+summary(model)
+```
+
+Według danego modelu efekt ciśnienia krwi jest nadal bardzo istotny statystycznie w odniesieniu do kosztów ubezpieczenia. Jedna jednostka ciśnienia krwi odpowiada za 542.39 jednostek monetarnych przyznanego ubezpieczenia. Współczynnik R^2 pokazuje że model wyjaśnia około 30 % wariancji. Test F informuje nas o tym że utworzony model jest lepszy od modelu zerowego (p-value < 0.05).
+
+Wniosek: Ostatecznie możemy potwierdzić naszą hipotezę o tym poziom ciśnienia krwi wpływa na zwiększenie kwoty przyznanej z ubezpieczenia.
+ 
+
+**Hipoteza 2**
+Czy kwota przyznana przez ubezpieczenie zwiększa się gdy osoba pali papierosy? 
+
+```{r}
+model <- lm(claim~smoker, insurance)
+summary(model)
+```
+
+Poziomem bazowym w naszej analizie jest średni koszt ubezpieczenia przyznawany osobie niepalącej. Dla osoby palącej kwota przyznawana przez ubezpieczenie jest o 23574.4 jednostek monetarnych wyższa. Według danego modelu efekt palenia jest bardzo istotny statystycznie w odniesieniu do kosztów ubezpieczenia. Współczynnik R^2 pokazuje że model wyjaśnia około 61 % wariancji. Test F informuje nas o tym że utworzony model jest lepszy od modelu zerowego (p-value < 0.05).
+
+Sprawdźmy czy osoby palące różnią się wartością bmi.
+
+```{r}
+ggplot(insurance %>% filter(!is.na(smoker)), aes(x = bmi, y = claim, color = smoker)) +
+  geom_point() + geom_smooth(method = "lm")
+```
+
+Istnieje podejrzenie interakcji między paleniem a bmi. Oznacza to że wpływ zmiennej niezależnej `smoker` na zmienną zależną `claim` może zmieniać się w zależności od poziomu drugiej zmiennej niezależnej `bmi`.
+
+```{r}
+model <- lm(claim ~ smoker*bmi, insurance)
+summary(model)
+```
+
+Ponadto interakcja jest uznana przez model za istotną statystycznie zatem należy ją uwzględnić w modelu.
+
+Sprawdźmy czy istnieje interakcja miedzy paleniem a wiekiem.
+
+```{r}
+ggplot(insurance %>% filter(!is.na(smoker)), aes(x = age, y = claim, color = smoker)) +
+  geom_point() + geom_smooth(method = "lm")
+```
+
+Linie regresji są do siebie równoległe. Brak interakcji między paleniem a wiekiem.
+
+Po uwzględnieniu zmiennych z istotną statystycznie interakcją z paleniem mamy następujące wyniki:
+
+```{r}
+model <- lm(claim ~  smoker + bmi, insurance)
+summary(model)
+```
+
+Według danego modelu efekt palenia jest nadal bardzo istotny statystycznie w odniesieniu do kosztów ubezpieczenia. Dla osoby palącej kwota przyznawana przez ubezpieczenie jest o 23547.55 jednostek monetarnych wyższa. Współczynnik R^2 pokazuje że model wyjaśnia około 65 % wariancji. Test F informuje nas o tym że utworzony model jest lepszy od modelu zerowego (p-value < 0.05).
+
+Wniosek: Ostatecznie możemy potwierdzić naszą hipotezę o tym że kwota przyznana przez ubezpieczenie zwiększa się gdy osoba pali papierosy.
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model)
+```
+
+
+**Hipoteza 3**
+Czy kwota przyznana przez ubezpieczenie zwiększa się wraz z ilością posiadanych dzieci?
+
+Tworzymy model sprawdzający w jaki sposób posiadanie dzieci wpływa na zmienną `claim`.
+
+```{r}
+model <-lm(claim ~ have_child, insurance)
+summary(model)
+```
+
+Poziomem bazowym w naszej analizie jest średni koszt ubezpieczenia przyznawany osobie nie posiadającej dzieci. Dla osób z dziećmi kwota przyznawana przez ubezpieczenie jest o 1465 jednostek monetarnych wyższa. Według danego modelu fakt posiadania dzieci jest dość istotny statystycznie w odniesieniu do kosztów ubezpieczenia.
+
+Sprawdzamy jaka kwota ubezpieczenia jest przyznawana zależnie od tego ile dzieci ma osoba ubezpieczona.
+
+```{r}
+ggplot(insurance %>% filter(!is.na(have_child)), aes(x = children, y = claim)) +
+  geom_point() + geom_smooth(method = "lm")
+```
+
+Sprawdzimy teraz czy posiadanie dzieci może zależeć od wieku osoby, gdyż zazwyczaj wiele osób nie decyduje się na zakładanie rodziny w młodym wieku. Sprawdzimy też czy zmienna `gender` ma jakiś istotny wpływ na ich ilość. 
+
+```{r}
+ggplot(insurance %>% filter(!is.na(children)), aes(x = age, y = claim, color = have_child)) +
+  geom_point() + geom_smooth(method = "lm")
+```
+
+```{r}
+ggplot(insurance %>% filter(!is.na(children)), aes(x = children, y = claim, color = gender)) +
+  geom_point() + geom_smooth(method = "lm")
+```
+
+Z powyższych wykresów łatwo wywnioskować, że nie występuje widoczna zależność między płcią oraz wiekiem a posiadaniem dzieci (bądź ich ilością). Nie ma również żadnej interakcji między zmiennymi.
+
+Warto sprawdzić również czy wysokość ciśnienia, bądź wyższe bmi wpływa na ilość dzieci, na którą decydują się osoby ubezpieczone. W teorii oba te parametry, gdy są wysokie, mogą być przyczyną decyzji na posiadanie mniejszej ilości potomstwa, bądź całkowitą rezygnację z niego.
+
+```{r}
+ggplot(insurance %>% filter(!is.na(children)), aes(x = bmi, y = claim, color = children)) +
+  geom_point() + geom_smooth(method = "lm")
+```
+
+```{r}
+ggplot(insurance %>% filter(!is.na(children)), aes(x = bloodpressure, y = claim, color = children)) +
+  geom_point() + geom_smooth(method = "lm")
+```
+
+Jak możemy zauważyć na posiadanie czwórki bądź piątki dzieci, częściej decydują się osoby o mniejszym bmi oraz ciśnieniu. Warto zatem sprawdzić, jak wygląda model, uwzględniający powyższe zmienne, dla tych właśnie ilości dzieci. Uwzględniony zostanie również wiek, który może wpływać zarówno na bmi jak i ciśnienie.
+
+```{r}
+kids <- insurance %>% filter(children == c("Four","Five"))
+```
+
+```{r}
+model <- lm(claim ~ bloodpressure + age + children, kids)
+summary(model)
+```
+
+```{r}
+model <- lm(claim ~ bmi + age + children, kids)
+summary(model)
+```
+
+```{r}
+model <- lm(claim ~ bloodpressure + bmi + age + children, kids)
+summary(model)
+```
+
+Po spojrzeniu na powyższe modele nie możemy przyjąć zależności między liczbą posiadanych dzieci, a wybranymi zmiennymi. Nie wykazują istotności statystycznej, ani nie poprawiają modelu zawierającego jedynie zmienną `children`.
+
+Wniosek: Ostatecznie nie możemy przyjąć naszej hipotezy, ponieważ kwota przyznanego ubezpieczenia wzrasta dla osób posiadających od jednego do trójki dzieci, a następnie przy czwórce dzieci mimo wzrostu kwoty, jest on o wiele mniejszy. Natomiast przy piątce dzieci, kwota przyznanego ubezpieczenia wyraźnie maleje. 
